@@ -10,7 +10,7 @@ name = "vlfd_ffi"
 crate-type = ["staticlib", "rlib"]
 
 [dependencies]
-vlfd-rs = { path = "../vlfd-rs" }
+vlfd-rs = "0.1"
 
 [build-dependencies]
 cbindgen = "0.29"
