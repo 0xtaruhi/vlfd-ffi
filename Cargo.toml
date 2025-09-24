@@ -1,0 +1,16 @@
+[package]
+name = "vlfd-ffi"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+description = "C bindings (FFI) for vlfd-rs"
+
+[lib]
+name = "vlfd_ffi"
+crate-type = ["staticlib", "rlib"]
+
+[dependencies]
+vlfd-rs = { path = "../vlfd-rs" }
+
+[build-dependencies]
+cbindgen = "0.29"
