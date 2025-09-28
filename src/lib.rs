@@ -3,12 +3,97 @@ use std::cell::RefCell;
 use std::ffi::{CStr, CString};
 use std::os::raw::{c_char, c_int, c_uint, c_void};
 
-use vlfd_rs::{Device, IoSettings, Programmer};
+use vlfd_rs::{
+    Device,
+    HotplugEvent,
+    HotplugEventKind,
+    HotplugOptions,
+    HotplugRegistration,
+    IoSettings,
+    Programmer,
+};
 
 #[repr(C)]
 pub struct VlfdDevice {
     inner: *mut c_void,
 }
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct VlfdHotplugOptions {
+    pub filter_vendor_id: bool,
+    pub vendor_id: u16,
+    pub filter_product_id: bool,
+    pub product_id: u16,
+    pub filter_class_code: bool,
+    pub class_code: u8,
+    pub enumerate_existing: bool,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct VlfdOptionalU16 {
+    pub has_value: bool,
+    pub value: u16,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct VlfdOptionalU8 {
+    pub has_value: bool,
+    pub value: u8,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct VlfdSliceU8 {
+    pub data: *const u8,
+    pub len: usize,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VlfdHotplugEventKind {
+    Arrived = 0,
+    Left = 1,
+}
+
+impl From<HotplugEventKind> for VlfdHotplugEventKind {
+    fn from(value: HotplugEventKind) -> Self {
+        match value {
+            HotplugEventKind::Arrived => VlfdHotplugEventKind::Arrived,
+            HotplugEventKind::Left => VlfdHotplugEventKind::Left,
+        }
+    }
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct VlfdHotplugDeviceInfo {
+    pub bus_number: u8,
+    pub address: u8,
+    pub port_numbers: VlfdSliceU8,
+    pub vendor_id: VlfdOptionalU16,
+    pub product_id: VlfdOptionalU16,
+    pub class_code: VlfdOptionalU8,
+    pub sub_class_code: VlfdOptionalU8,
+    pub protocol_code: VlfdOptionalU8,
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct VlfdHotplugEvent {
+    pub kind: VlfdHotplugEventKind,
+    pub device: VlfdHotplugDeviceInfo,
+}
+
+#[repr(C)]
+pub struct VlfdHotplugRegistration {
+    inner: *mut c_void,
+}
+
+pub type VlfdHotplugCallback =
+    Option<unsafe extern "C" fn(user_data: *mut c_void, event: *const VlfdHotplugEvent)>;
 
 thread_local! {
     static LAST_ERROR: RefCell<Option<CString>> = const { RefCell::new(None) };
@@ -22,6 +107,85 @@ fn set_last_error(message: &str) {
     });
 }
 
+fn opt_u16(value: Option<u16>) -> VlfdOptionalU16 {
+    match value {
+        Some(v) => VlfdOptionalU16 {
+            has_value: true,
+            value: v,
+        },
+        None => VlfdOptionalU16 {
+            has_value: false,
+            value: 0,
+        },
+    }
+}
+
+fn opt_u8(value: Option<u8>) -> VlfdOptionalU8 {
+    match value {
+        Some(v) => VlfdOptionalU8 {
+            has_value: true,
+            value: v,
+        },
+        None => VlfdOptionalU8 {
+            has_value: false,
+            value: 0,
+        },
+    }
+}
+
+fn hotplug_options_from_ffi(options: Option<&VlfdHotplugOptions>) -> HotplugOptions {
+    let mut result = HotplugOptions::default();
+    if let Some(opts) = options {
+        if opts.filter_vendor_id {
+            result.vendor_id = Some(opts.vendor_id);
+        }
+        if opts.filter_product_id {
+            result.product_id = Some(opts.product_id);
+        }
+        if opts.filter_class_code {
+            result.class_code = Some(opts.class_code);
+        }
+        result.enumerate = opts.enumerate_existing;
+    }
+    result
+}
+
+fn hotplug_event_to_ffi(event: HotplugEvent) -> (VlfdHotplugEvent, Vec<u8>) {
+    let kind = event.kind;
+    let device = event.device;
+
+    let bus_number = device.bus_number;
+    let address = device.address;
+    let vendor_id = device.vendor_id;
+    let product_id = device.product_id;
+    let class_code = device.class_code;
+    let sub_class_code = device.sub_class_code;
+    let protocol_code = device.protocol_code;
+    let port_numbers = device.port_numbers;
+
+    let info = VlfdHotplugDeviceInfo {
+        bus_number,
+        address,
+        port_numbers: VlfdSliceU8 {
+            data: port_numbers.as_ptr(),
+            len: port_numbers.len(),
+        },
+        vendor_id: opt_u16(vendor_id),
+        product_id: opt_u16(product_id),
+        class_code: opt_u8(class_code),
+        sub_class_code: opt_u8(sub_class_code),
+        protocol_code: opt_u8(protocol_code),
+    };
+
+    (
+        VlfdHotplugEvent {
+            kind: kind.into(),
+            device: info,
+        },
+        port_numbers,
+    )
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn vlfd_get_last_error_message() -> *const c_char {
     static EMPTY: &[u8] = b"\0";
@@ -29,6 +193,80 @@ pub extern "C" fn vlfd_get_last_error_message() -> *const c_char {
         Some(s) => s.as_ptr(),
         None => EMPTY.as_ptr() as *const c_char,
     })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn vlfd_hotplug_options_default() -> VlfdHotplugOptions {
+    VlfdHotplugOptions::default()
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn vlfd_hotplug_register(
+    options: *const VlfdHotplugOptions,
+    callback: VlfdHotplugCallback,
+    user_data: *mut c_void,
+) -> *mut VlfdHotplugRegistration {
+    let callback = match callback {
+        Some(cb) => cb,
+        None => {
+            set_last_error("null callback passed to vlfd_hotplug_register");
+            return std::ptr::null_mut();
+        }
+    };
+
+    let options_ref = unsafe { options.as_ref() };
+    let rust_options = hotplug_options_from_ffi(options_ref);
+    let user_data_value = user_data as usize;
+
+    let device = match Device::new() {
+        Ok(dev) => dev,
+        Err(err) => {
+            set_last_error(&format!("Device::new failed: {}", err));
+            return std::ptr::null_mut();
+        }
+    };
+
+    let registration = match device.usb().register_hotplug_callback(rust_options, move |event| {
+        let (ffi_event, ports) = hotplug_event_to_ffi(event);
+        unsafe {
+            let userdata_ptr = user_data_value as *mut c_void;
+            callback(userdata_ptr, &ffi_event as *const VlfdHotplugEvent);
+        }
+        drop(ports);
+    }) {
+        Ok(reg) => reg,
+        Err(err) => {
+            set_last_error(&format!("register_hotplug_callback failed: {}", err));
+            return std::ptr::null_mut();
+        }
+    };
+
+    let boxed_registration = Box::new(registration);
+    let handle = Box::new(VlfdHotplugRegistration {
+        inner: Box::into_raw(boxed_registration) as *mut c_void,
+    });
+
+    Box::into_raw(handle)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn vlfd_hotplug_unregister(registration: *mut VlfdHotplugRegistration) -> c_int {
+    if registration.is_null() {
+        set_last_error("null registration in vlfd_hotplug_unregister");
+        return -1;
+    }
+
+    unsafe {
+        let wrapper = Box::from_raw(registration);
+        if wrapper.inner.is_null() {
+            set_last_error("invalid registration handle");
+            return -1;
+        }
+        let inner = Box::from_raw(wrapper.inner as *mut HotplugRegistration);
+        drop(inner);
+    }
+
+    0
 }
 
 #[unsafe(no_mangle)]
