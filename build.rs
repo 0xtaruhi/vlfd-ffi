@@ -1,14 +1,13 @@
-use std::path::Path;
+use std::{fs, path::Path};
 
 fn main() {
-    // Regenerate header only when relevant inputs change.
     println!("cargo:rerun-if-changed=src/lib.rs");
 
     let crate_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
     let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR not set");
     let header_path = Path::new(&out_dir).join("vlfd_ffi.h");
 
-    if Path::new("cbindgen.toml").exists() {
+    if Path::new(&crate_dir).join("cbindgen.toml").exists() {
         println!("cargo:rerun-if-changed=cbindgen.toml");
     }
 
@@ -23,12 +22,23 @@ fn main() {
     };
 
     cbindgen::Builder::new()
-        .with_crate(crate_dir)
+        .with_crate(&crate_dir)
         .with_config(config)
         .generate()
         .expect("Unable to generate bindings")
         .write_to_file(&header_path);
 
-    // Make OUT_DIR available to build scripts of dependent crates for includes.
     println!("cargo:include={}", out_dir);
+
+    let package_marker = format!("{sep}target{sep}package{sep}", sep = std::path::MAIN_SEPARATOR);
+    let running_in_package_dir = crate_dir.contains(&package_marker) || crate_dir.contains("/target/package/");
+
+    if !running_in_package_dir {
+        let display_path = Path::new(&crate_dir).join("vlfd_ffi.h");
+        if let Err(err) = fs::copy(&header_path, &display_path) {
+            println!("cargo:warning=Failed to copy header to {}: {}", display_path.display(), err);
+        } else {
+            println!("cargo:warning=Generated C header at {}", display_path.display());
+        }
+    }
 }
