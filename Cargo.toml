@@ -7,10 +7,10 @@ description = "C bindings (FFI) for vlfd-rs"
 
 [lib]
 name = "vlfd_ffi"
-crate-type = ["staticlib", "rlib"]
+crate-type = ["staticlib", "rlib", "cdylib"]
 
 [dependencies]
-vlfd-rs = 1.0
+vlfd-rs = "1.0"
 
 [build-dependencies]
 cbindgen = "0.29"

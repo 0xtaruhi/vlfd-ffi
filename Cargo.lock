@@ -465,6 +465,8 @@ dependencies = [
 [[package]]
 name = "vlfd-rs"
 version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4a67d4b9a910e199dc5b09267031f77609428b06df7463a8e4f1bc7c6a1608b7"
 dependencies = [
  "rusb",
 ]
