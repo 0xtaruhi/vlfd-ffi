@@ -1,8 +1,16 @@
+use std::path::Path;
+
 fn main() {
-    // Generate C header using cbindgen when building the crate.
-    let crate_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
-    // Write header to crate root for easier consumption
-    let header_path = std::path::Path::new(&crate_dir).join("vlfd_ffi.h");
+    // Regenerate header only when relevant inputs change.
+    println!("cargo:rerun-if-changed=src/lib.rs");
+
+    let crate_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
+    let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR not set");
+    let header_path = Path::new(&out_dir).join("vlfd_ffi.h");
+
+    if Path::new("cbindgen.toml").exists() {
+        println!("cargo:rerun-if-changed=cbindgen.toml");
+    }
 
     let config = cbindgen::Config {
         language: cbindgen::Language::C,
@@ -19,5 +27,8 @@ fn main() {
         .with_config(config)
         .generate()
         .expect("Unable to generate bindings")
-        .write_to_file(header_path);
+        .write_to_file(&header_path);
+
+    // Make OUT_DIR available to build scripts of dependent crates for includes.
+    println!("cargo:include={}", out_dir);
 }
